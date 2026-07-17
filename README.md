@@ -6,13 +6,13 @@
 
 :warning: **NOTE**: this version of birdwatcher is designed to work with BIRD version 2 and up. If you want to use birdwatcher with BIRD 1.x, refer to the `bird1` branch.
 
-This project is heavily influenced by [anycast-healthchecker](https://github.com/unixsurfer/anycast_healthchecker). If you want to know more about use cases of birdwatcher, please read their excellent documention about anycasted services and how a healthchecker can contribute to a more stable service availability.
+This project is heavily influenced by [anycast-healthchecker](https://github.com/unixsurfer/anycast_healthchecker). If you want to know more about use cases of birdwatcher, please read their excellent documentation about anycasted services and how a healthchecker can contribute to a more stable service availability.
 
 In a nutshell: birdwatcher periodically checks a specific service and tells BIRD which prefixes to announce or to withdraw when the service appears to be up or down respectively.
 
 ## Why birdwatcher
 
-When I found out about anycast-healthchecker (sadly only recently on [HaproxyConf 2019](https://www.haproxyconf.com/)), I figured this would solve the missing link between BIRD and whatever anycasted services I have running (mostly haproxy though). Currently however in anycast-healthchecker, it is not possible to specify multiple prefixes to a service. Some machines in these kind of setups are announcing _many_ `/32` and `/128` prefixes and I ended up specifiying so many services (one per prefix) that python crashed giving me a `too many open files` error. At first I tried to patch anycast-healthchecker but ended up writing something similar, hence birdwatcher.
+When I found out about anycast-healthchecker on [HaproxyConf 2019](https://www.haproxyconf.com/), I figured this would solve the missing link between BIRD and whatever anycasted services I had running (mostly haproxy though). Currently however in anycast-healthchecker, it is not possible to specify multiple prefixes to a service. Some machines in these kind of setups are announcing _many_ `/32` and `/128` prefixes and I ended up specifying so many services (one per prefix) that python crashed giving me a `too many open files` error. At first I tried to patch anycast-healthchecker but ended up writing something similar, hence birdwatcher.
 
 It is written in Go because I like it and running multiple threads is easy.
 
@@ -38,7 +38,7 @@ This simple example configures a single service, runs `haproxy_check.sh` every s
 
 Sample output in `/etc/bird/birdwatcher.conf` if `haproxy_check.sh` checks out would be:
 
-```
+```text
 # DO NOT EDIT MANUALLY
 function match_route() -> bool
 {
@@ -50,7 +50,7 @@ function match_route() -> bool
 
 As soon as birdwatcher finds out haproxy is down, it will change the content in `/etc/bird/birdwatcher.conf` to:
 
-```
+```text
 # DO NOT EDIT MANUALLY
 function match_route() -> bool
 {
@@ -127,6 +127,26 @@ protocol bgp my_bgp_v6 {
 - Each service needs a **unique `functionname`** (defaults to `match_route`)
 - The generated function name must match the one referenced in your BIRD `export where` filter
 - Place `include "/etc/bird/birdwatcher.conf";` at the **top** of your bird.conf — before any protocol definitions that reference the functions
+## Command-line flags
+
+| flag            | description                                                                                                                                            |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `-config`       | Path to birdwatcher's own TOML config file. Defaults to **/etc/birdwatcher.conf**.                                                                      |
+| `-check-config` | Validate the config file and exit. Combine with `-debug` to also dump the parsed config as JSON.                                                        |
+| `-debug`        | Increase the log level to debug.                                                                                                                        |
+| `-systemd`      | Optimize behavior for running under systemd: drop log timestamps (journald adds its own) and send `sd_notify` readiness, status and stopping updates.   |
+| `-version`      | Print the version and exit.                                                                                                                             |
+
+Note the two distinct paths: the `-config` flag points to birdwatcher's own TOML
+config (default **/etc/birdwatcher.conf**), while the `configfile` key _inside_
+that config is the BIRD prefix file birdwatcher generates (default
+**/etc/bird/birdwatcher.conf**).
+
+For example, to validate a config file without starting birdwatcher:
+
+```bash
+birdwatcher -check-config -config /etc/birdwatcher.conf
+```
 
 ## Configuration
 
@@ -163,3 +183,41 @@ Configuration for the prometheus exporter
 | enabled | Boolean whether you want to export prometheus metrics. Defaults to **false** |
 | port    | Port to export prometheus metrics on. Defaults to **9091**                   |
 | path    | Path to the prometheus metrics. Defaults to **/metrics**                     |
+
+## Testing
+
+The regular unit tests run with:
+
+```bash
+go test ./...
+```
+
+### End-to-end tests
+
+The `e2e/` package contains an end-to-end test that exercises the full loop: it
+spins up a real BIRD instance in a container (via
+[testcontainers-go](https://golang.testcontainers.org/)), runs a real
+`birdwatcher` binary against it, and verifies through `birdc` that prefixes are
+announced and withdrawn as the service health changes.
+
+Because it launches containers, it is guarded behind the `e2e` build tag and is
+**not** part of `go test ./...`. To run it you need a working Docker daemon
+(Docker Desktop, [Colima](https://github.com/abiosoft/colima), or a native
+Docker Engine):
+
+```bash
+go test -tags e2e -v -timeout 600s ./e2e/...
+```
+
+The test builds the `birdwatcher` binary itself, so no separate build step is
+required. It automatically disables the testcontainers Ryuk reaper
+(`TESTCONTAINERS_RYUK_DISABLED=true`), which works around issues with
+non-standard Docker socket paths; containers are still cleaned up when the test
+finishes.
+
+On macOS with Colima, note that only your home directory is mounted into the
+Docker VM by default. The test accounts for this by creating its temporary
+working directory under your home directory rather than `/tmp`.
+
+This is the same command the CI `e2e` job runs (see
+`.github/workflows/go.yml`).
